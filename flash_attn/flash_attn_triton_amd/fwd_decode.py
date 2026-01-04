@@ -2,7 +2,7 @@ import torch
 import triton
 import triton.language as tl
 from typing import Literal, Optional, Union
-from .utils import AUTOTUNE, DEBUG, get_padded_headsize, get_shape_and_strides_from_layout, is_cdna
+from .utils import AUTOTUNE, DEBUG, get_padded_headsize, get_shape_and_strides_from_layout, is_cdna, is_rdna
 
 def get_cdna_autotune_configs():
     return [
@@ -23,15 +23,36 @@ def get_cdna_autotune_configs():
                       num_warps=4),
     ], ['IS_CAUSAL', 'dropout_p', 'MAX_SEQLENS_Q', 'MAX_SEQLENS_K', 'ACTUAL_BLOCK_DMODEL', 'VARLEN', 'HQ', 'HK']
 
+def get_rdna_autotune_configs():
+    return [
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_stages=1,
+                      num_warps=2),
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1,
+                      num_warps=2),
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_stages=1,
+                      num_warps=2),
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1,
+                      num_warps=2),
+        triton.Config({'BLOCK_M': 16, 'BLOCK_N': 16, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_stages=1,
+                      num_warps=2),
+        triton.Config({'BLOCK_M': 16, 'BLOCK_N': 16, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1,
+                      num_warps=2),
+        # Fall-back config.
+        triton.Config({'BLOCK_M': 16, 'BLOCK_N': 16, 'waves_per_eu': 1, 'PRE_LOAD_V': False}, num_stages=1,
+                      num_warps=2),
+    ], ['IS_CAUSAL', 'dropout_p', 'MAX_SEQLENS_Q', 'MAX_SEQLENS_K', 'ACTUAL_BLOCK_DMODEL', 'VARLEN', 'HQ', 'HK']
+
 def get_autotune_configs():
     if AUTOTUNE:
-        if is_cdna():
+        if is_rdna():
+            autotune_configs, autotune_keys = get_rdna_autotune_configs()
+        elif is_cdna():
             autotune_configs, autotune_keys = get_cdna_autotune_configs()
-            fwd_auto_tune_configs, fwd_autotune_keys= autotune_configs, autotune_keys
-            reduce_auto_tune_configs, reduce_autotune_keys = autotune_configs, autotune_keys
-            return (fwd_auto_tune_configs, fwd_autotune_keys), (reduce_auto_tune_configs, reduce_autotune_keys)
         else:
             raise ValueError("Unknown Device Type")
+        fwd_auto_tune_configs, fwd_autotune_keys = autotune_configs, autotune_keys
+        reduce_auto_tune_configs, reduce_autotune_keys = autotune_configs, autotune_keys
+        return (fwd_auto_tune_configs, fwd_autotune_keys), (reduce_auto_tune_configs, reduce_autotune_keys)
     else:
         autotune_configs, autotune_keys = [
             triton.Config(
